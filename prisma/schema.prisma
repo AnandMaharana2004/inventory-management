@@ -1,0 +1,300 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  ADMIN
+  MANAGER
+  SALESMAN
+}
+
+enum PaymentStatus {
+  PAID
+  PARTIAL
+  PENDING
+}
+
+enum StockTxnType {
+  OPENING
+  PURCHASE
+  SALE
+  DAMAGE
+  ADJUSTMENT
+}
+
+enum ReferenceType {
+  OPENING
+  PO
+  BILL
+  DAMAGE
+  ADJUSTMENT
+}
+
+model User {
+  id Int @id @default(autoincrement())
+
+  name         String
+  passwordHash String
+
+  role UserRole
+
+  contactNumber String?
+  email         String?
+
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+
+  purchaseOrders PoHdr[]
+  salesBills     BillHdr[]
+  damages        Damage[]
+  stockLedgers   StockLedger[]
+}
+
+model Vendor {
+  id Int @id @default(autoincrement())
+
+  name  String
+  gstin String?
+
+  location      String?
+  contactPerson String?
+  contactNumber String?
+  email         String?
+
+  createdAt DateTime @default(now())
+
+  purchaseOrders PoHdr[]
+}
+
+model Customer {
+  id Int @id @default(autoincrement())
+
+  name String
+
+  mobileNo String?
+  gstin    String?
+
+  contactPerson String?
+
+  address String?
+  city    String?
+
+  createdAt DateTime @default(now())
+
+  bills BillHdr[]
+}
+
+model ItemMaster {
+  id Int @id @default(autoincrement())
+
+  itemCode String @unique
+
+  itemDesc String
+
+  hsnCode String?
+
+  category String?
+  brand    String?
+
+  packSize Int
+
+  unitName String
+
+  gstPct Decimal @db.Decimal(5, 2)
+
+  reorderLevel Int @default(0)
+
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  stock ItemStock?
+
+  poDetails          PoDtl[]
+  billDetails        BillDtl[]
+  damages            Damage[]
+  stockLedgerEntries StockLedger[]
+}
+
+model ItemStock {
+  itemId Int @id
+
+  currentStockPieces Int @default(0)
+
+  updatedAt DateTime @updatedAt
+
+  item ItemMaster @relation(fields: [itemId], references: [id])
+}
+
+model PoHdr {
+  id Int @id @default(autoincrement())
+
+  poDate DateTime
+
+  invoiceNumber String?
+
+  totalAmount    Decimal @db.Decimal(18, 2)
+  discountAmount Decimal @db.Decimal(18, 2)
+
+  cgstAmount Decimal @db.Decimal(18, 2)
+  sgstAmount Decimal @db.Decimal(18, 2)
+
+  netAmount Decimal @db.Decimal(18, 2)
+
+  vendorId    Int
+  createdById Int
+
+  vendor    Vendor @relation(fields: [vendorId], references: [id])
+  createdBy User   @relation(fields: [createdById], references: [id])
+
+  details PoDtl[]
+
+  createdAt DateTime @default(now())
+}
+
+model PoDtl {
+  id Int @id @default(autoincrement())
+
+  poId   Int
+  itemId Int
+
+  packQty  Int
+  looseQty Int
+
+  totalPieces Int
+
+  purchaseRate Decimal @db.Decimal(18, 2)
+
+  lineAmount Decimal @db.Decimal(18, 2)
+
+  discountPct    Decimal @db.Decimal(5, 2)
+  discountAmount Decimal @db.Decimal(18, 2)
+
+  cgstPct Decimal @db.Decimal(5, 2)
+  sgstPct Decimal @db.Decimal(5, 2)
+
+  netAmount Decimal @db.Decimal(18, 2)
+
+  po   PoHdr      @relation(fields: [poId], references: [id])
+  item ItemMaster @relation(fields: [itemId], references: [id])
+}
+
+model BillHdr {
+  id Int @id @default(autoincrement())
+
+  billDate DateTime
+
+  customerId  Int
+  createdById Int
+
+  totalAmount    Decimal @db.Decimal(18, 2)
+  discountAmount Decimal @db.Decimal(18, 2)
+
+  cgstAmount Decimal @db.Decimal(18, 2)
+  sgstAmount Decimal @db.Decimal(18, 2)
+
+  netAmount Decimal @db.Decimal(18, 2)
+
+  paymentStatus PaymentStatus
+
+  customer  Customer @relation(fields: [customerId], references: [id])
+  createdBy User     @relation(fields: [createdById], references: [id])
+
+  details BillDtl[]
+
+  createdAt DateTime @default(now())
+}
+
+model BillDtl {
+  id Int @id @default(autoincrement())
+
+  billId Int
+  itemId Int
+
+  packQty  Int
+  looseQty Int
+
+  totalPieces Int
+
+  saleRate Decimal @db.Decimal(18, 2)
+
+  lineAmount Decimal @db.Decimal(18, 2)
+
+  discountPct    Decimal @db.Decimal(5, 2)
+  discountAmount Decimal @db.Decimal(18, 2)
+
+  cgstPct Decimal @db.Decimal(5, 2)
+  sgstPct Decimal @db.Decimal(5, 2)
+
+  netAmount Decimal @db.Decimal(18, 2)
+
+  bill BillHdr    @relation(fields: [billId], references: [id])
+  item ItemMaster @relation(fields: [itemId], references: [id])
+}
+
+model Damage {
+  id Int @id @default(autoincrement())
+
+  damageDate DateTime
+
+  itemId Int
+
+  packQty  Int
+  looseQty Int
+
+  totalPieces Int
+
+  reason String?
+
+  estimatedLoss Decimal? @db.Decimal(18, 2)
+
+  createdById Int
+
+  item      ItemMaster @relation(fields: [itemId], references: [id])
+  createdBy User       @relation(fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+}
+
+model StockLedger {
+  id Int @id @default(autoincrement())
+
+  txnDate DateTime
+
+  itemId Int
+
+  txnType StockTxnType
+
+  referenceType ReferenceType
+
+  referenceId Int?
+
+  qtyInPieces  Int @default(0)
+  qtyOutPieces Int @default(0)
+
+  balanceAfter Int
+
+  unitCost  Decimal? @db.Decimal(18, 2)
+  unitPrice Decimal? @db.Decimal(18, 2)
+
+  remarks String?
+
+  createdById Int
+
+  item      ItemMaster @relation(fields: [itemId], references: [id])
+  createdBy User       @relation(fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+}
