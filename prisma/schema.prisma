@@ -40,6 +40,12 @@ enum ReferenceType {
   ADJUSTMENT
 }
 
+enum DiscountAttribute {
+  PER_ITEM
+  PER_PACK
+  PER_AMOUNT
+}
+
 model User {
   id Int @id @default(autoincrement())
 
@@ -121,6 +127,9 @@ model ItemMaster {
   updatedAt DateTime @updatedAt
 
   stock ItemStock?
+
+  offeredOnDiscounts    Discount[] @relation("OfferItem")
+  discountedInDiscounts Discount[] @relation("DiscountItem")
 
   poDetails          PoDtl[]
   billDetails        BillDtl[]
@@ -297,4 +306,31 @@ model StockLedger {
   createdBy User       @relation(fields: [createdById], references: [id])
 
   createdAt DateTime @default(now())
+}
+
+model Discount {
+  id Int @id @default(autoincrement())
+
+  onItemId         Int
+  discountedItemId Int
+
+  perAttribute DiscountAttribute
+  attributeQty Decimal           @db.Decimal(18, 2)
+
+  discountedAttribute DiscountAttribute
+  discountedQty       Decimal           @db.Decimal(18, 2)
+
+  startDate DateTime
+  endDate   DateTime
+
+  onItem         ItemMaster @relation("OfferItem", fields: [onItemId], references: [id])
+  discountedItem ItemMaster @relation("DiscountItem", fields: [discountedItemId], references: [id])
+
+  isActive Boolean @default(true)
+
+  createdById Int?
+  updatedById Int?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
