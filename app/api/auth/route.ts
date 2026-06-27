@@ -1,65 +1,65 @@
-import { compare } from "bcryptjs";
-import { NextResponse } from "next/server";
+import { cookies } from "next/headers";
 
-import {
-  AUTH_TOKEN_COOKIE_NAME,
-  createAuthToken,
-  getAuthTokenMaxAgeSeconds,
-} from "@/lib/auth";
-import prisma from "@/lib/prisma";
+import { Env } from "@/constants/env";
+import { AUTH_TOKEN_COOKIE_NAME, getAuthTokenMaxAgeSeconds } from "@/lib/auth";
 
-type LoginBody = {
-  id?: unknown;
-  password?: unknown;
-};
+import { ApiResponse, AppError, BadRequestError } from "@/lib/response";
+
+import { authService } from "@/services/auth.service";
+import { loginSchema } from "@/validation/auth.validation";
 
 export async function POST(request: Request) {
-  const body = (await request.json().catch(() => null)) as LoginBody | null;
-  const id = Number(body?.id);
-  const password = typeof body?.password === "string" ? body.password : "";
+  try {
+    const body = await request.json();
 
-  if (!Number.isInteger(id) || id <= 0 || !password) {
-    return NextResponse.json({ message: "Invalid login credentials" }, { status: 400 });
+    const result = loginSchema.safeParse(body);
+
+
+
+    if (!result.success) {
+      throw new BadRequestError(result.error.issues[0]?.message || "Invalid request data");
+    }
+
+    const { token, user } = await authService.Login(result.data);
+
+    const cookieStore = await cookies();
+
+    cookieStore.set(AUTH_TOKEN_COOKIE_NAME, token, {
+      httpOnly: true,
+      secure: Env.NODE_ENV === "production",
+      sameSite: "strict",
+      path: "/",
+      maxAge: getAuthTokenMaxAgeSeconds(),
+    });
+
+    return Response.json(
+      new ApiResponse("User logged in successfully", {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+      }),
+      {
+        status: 200,
+      },
+    );
+  } catch (error) {
+    if (error instanceof AppError) {
+      return Response.json(
+        {
+          success: error.success,
+          message: error.message,
+        },
+        { status: error.statusCode },
+      );
+    }
+
+    return Response.json(
+      {
+        success: false,
+        message: "Unable to login. Please try again.",
+      },
+      { status: 500 },
+    );
   }
-
-  const user = await prisma.user.findUnique({
-    where: { id },
-    select: {
-      id: true,
-      name: true,
-      role: true,
-      email: true,
-      passwordHash: true,
-      isActive: true,
-    },
-  });
-
-  if (!user || !user.isActive) {
-    return NextResponse.json({ message: "Invalid login credentials" }, { status: 401 });
-  }
-
-  const isPasswordValid = await compare(password, user.passwordHash);
-
-  if (!isPasswordValid) {
-    return NextResponse.json({ message: "Invalid login credentials" }, { status: 401 });
-  }
-
-  const authUser = {
-    id: user.id,
-    name: user.name,
-    role: user.role,
-    email: user.email,
-  };
-  const token = createAuthToken(authUser);
-  const response = NextResponse.json({ user: authUser });
-
-  response.cookies.set(AUTH_TOKEN_COOKIE_NAME, token, {
-    httpOnly: true,
-    sameSite: "lax",
-    secure: process.env.NODE_ENV === "production",
-    path: "/",
-    maxAge: getAuthTokenMaxAgeSeconds(),
-  });
-
-  return response;
 }
