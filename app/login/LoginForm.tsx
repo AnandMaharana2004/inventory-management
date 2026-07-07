@@ -23,7 +23,7 @@ export function LoginForm() {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        id: formData.get("id"),
+        email: formData.get("email"),
         password: formData.get("password"),
       }),
     });
@@ -43,15 +43,15 @@ export function LoginForm() {
   return (
     <form className="space-y-4" onSubmit={handleSubmit}>
       <div className="space-y-2">
-        <label htmlFor="user-id" className="text-sm font-medium">
-          ID
+        <label htmlFor="email" className="text-sm font-medium">
+          Email
         </label>
         <Input
-          id="user-id"
-          name="id"
-          type="text"
-          placeholder="Enter your id"
-          autoComplete="username"
+          id="email"
+          name="email"
+          type="email"
+          placeholder="Enter your email"
+          autoComplete="email"
           required
         />
       </div>
@@ -70,7 +70,7 @@ export function LoginForm() {
         />
       </div>
 
-      {error ? <p className="text-sm text-destructive">{error}</p> : null}
+      {error ? <p className="text-destructive text-sm">{error}</p> : null}
 
       <Button type="submit" size="lg" className="w-full" disabled={isSubmitting}>
         {isSubmitting ? "Logging in..." : "Login"}

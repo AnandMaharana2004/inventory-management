@@ -5,24 +5,34 @@ import { ApiResponse, BadRequestError } from "@/lib/response";
 import { itemService } from "@/services/item.service";
 import { updateItemSchema } from "@/validation/item.validation";
 
-type RouteParams = { params: { id: string } };
+type RouteParams = {
+    params: Promise<{
+        id: string;
+    }>;
+};
 
 function parseId(idParam: string) {
     const id = Number(idParam);
+
     if (!Number.isInteger(id) || id <= 0) {
         throw new BadRequestError("Invalid item id.");
     }
+
     return id;
 }
 
 const VALID_INCLUDES = ["stock", "purchaseHistory", "salesHistory"] as const;
 
-export async function GET(request: Request, { params }: RouteParams) {
+export async function GET(
+    request: Request,
+    { params }: RouteParams
+) {
     try {
         // Authenticate — any logged-in role can view an item
         await AuthenticatinNeed(request);
 
-        const id = parseId(params.id);
+        const { id } = await params;
+        const itemId = parseId(id);
 
         const { searchParams } = new URL(request.url);
         const includeParam = searchParams.get("include") ?? undefined;
@@ -34,17 +44,22 @@ export async function GET(request: Request, { params }: RouteParams) {
         }
 
         const item = await itemService.GetItemById(
-            id,
+            itemId,
             includeParam as (typeof VALID_INCLUDES)[number] | undefined
         );
 
-        return Response.json(new ApiResponse("Item fetched successfully", item));
+        return Response.json(
+            new ApiResponse("Item fetched successfully", item)
+        );
     } catch (error) {
         return authErrorResponse(error);
     }
 }
 
-export async function PATCH(request: Request, { params }: RouteParams) {
+export async function PATCH(
+    request: Request,
+    { params }: RouteParams
+) {
     try {
         // Authenticate
         const authUser = await AuthenticatinNeed(request);
@@ -52,25 +67,32 @@ export async function PATCH(request: Request, { params }: RouteParams) {
         // Authorize — admin or manager can update items
         requireRole(authUser, UserRole.ADMIN, UserRole.MANAGER);
 
-        const id = parseId(params.id);
+        const { id } = await params;
+        const itemId = parseId(id);
 
         // Validate
         const body = await request.json();
+
         const result = updateItemSchema.safeParse(body);
         if (!result.success) {
             throw new BadRequestError(result.error.issues[0]?.message);
         }
 
         // Business Logic
-        const item = await itemService.UpdateItem(id, result.data);
+        const item = await itemService.UpdateItem(itemId, result.data);
 
-        return Response.json(new ApiResponse("Item updated successfully", item));
+        return Response.json(
+            new ApiResponse("Item updated successfully", item)
+        );
     } catch (error) {
         return authErrorResponse(error);
     }
 }
 
-export async function DELETE(request: Request, { params }: RouteParams) {
+export async function DELETE(
+    request: Request,
+    { params }: RouteParams
+) {
     try {
         // Authenticate
         const authUser = await AuthenticatinNeed(request);
@@ -78,12 +100,15 @@ export async function DELETE(request: Request, { params }: RouteParams) {
         // Authorize — admin or manager can delete items
         requireRole(authUser, UserRole.ADMIN, UserRole.MANAGER);
 
-        const id = parseId(params.id);
+        const { id } = await params;
+        const itemId = parseId(id);
 
         // Business Logic
-        await itemService.DeleteItem(id);
+        await itemService.DeleteItem(itemId);
 
-        return Response.json(new ApiResponse("Item deleted successfully", null));
+        return Response.json(
+            new ApiResponse("Item deleted successfully", null)
+        );
     } catch (error) {
         return authErrorResponse(error);
     }

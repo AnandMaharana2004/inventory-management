@@ -4,21 +4,32 @@ import { requireRole } from "@/lib/authorization";
 import { ApiResponse, BadRequestError } from "@/lib/response";
 import { itemService } from "@/services/item.service";
 
-type RouteParams = { params: { id: string } };
+type RouteParams = {
+    params: Promise<{
+        id: string;
+    }>;
+};
 
-export async function PATCH(request: Request, { params }: RouteParams) {
+export async function PATCH(
+    request: Request,
+    { params }: RouteParams
+) {
     try {
         const authUser = await AuthenticatinNeed(request);
         requireRole(authUser, UserRole.ADMIN, UserRole.MANAGER);
 
-        const id = Number(params.id);
-        if (!Number.isInteger(id) || id <= 0) {
+        const { id } = await params;
+
+        const itemId = Number(id);
+        if (!Number.isInteger(itemId) || itemId <= 0) {
             throw new BadRequestError("Invalid item id.");
         }
 
-        const item = await itemService.ActivateItem(id);
+        const item = await itemService.ActivateItem(itemId);
 
-        return Response.json(new ApiResponse("Item activated successfully", item));
+        return Response.json(
+            new ApiResponse("Item activated successfully", item)
+        );
     } catch (error) {
         return authErrorResponse(error);
     }

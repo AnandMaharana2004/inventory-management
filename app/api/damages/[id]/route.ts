@@ -4,21 +4,32 @@ import { requireRole } from "@/lib/authorization";
 import { ApiResponse, BadRequestError } from "@/lib/response";
 import { damageService } from "@/services/damage.service";
 
-type RouteParams = { params: { id: string } };
+type RouteParams = {
+    params: Promise<{
+        id: string;
+    }>;
+};
 
-export async function GET(request: Request, { params }: RouteParams) {
+export async function GET(
+    request: Request,
+    { params }: RouteParams
+) {
     try {
         const authUser = await AuthenticatinNeed(request);
         requireRole(authUser, UserRole.ADMIN, UserRole.MANAGER);
 
-        const id = Number(params.id);
-        if (!Number.isInteger(id) || id <= 0) {
+        const { id } = await params;
+
+        const damageId = Number(id);
+        if (!Number.isInteger(damageId) || damageId <= 0) {
             throw new BadRequestError("Invalid damage id.");
         }
 
-        const damage = await damageService.GetDamageById(id);
+        const damage = await damageService.GetDamageById(damageId);
 
-        return Response.json(new ApiResponse("Damage record fetched successfully", damage));
+        return Response.json(
+            new ApiResponse("Damage record fetched successfully", damage)
+        );
     } catch (error) {
         return authErrorResponse(error);
     }

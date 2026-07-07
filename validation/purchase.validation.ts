@@ -12,6 +12,12 @@ const purchaseDetailSchema = z
             .max(100, "discountPct cannot exceed 100.")
             .optional()
             .default(0),
+        rateBasis: z.enum([
+            "PIECE_EXCL_GST",
+            "PIECE_INCL_GST",
+            "PACK_EXCL_GST",
+            "PACK_INCL_GST",
+        ]).default("PIECE_EXCL_GST"),
     })
     .refine((data) => data.packQty > 0 || data.looseQty > 0, {
         message: "At least one of packQty or looseQty must be greater than 0.",

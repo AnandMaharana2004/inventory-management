@@ -5,60 +5,84 @@ import { ApiResponse, BadRequestError } from "@/lib/response";
 import { userService } from "@/services/user.service";
 import { updateUserSchema } from "@/validation/user.validation";
 
-type RouteParams = { params: { id: string } };
+type RouteParams = {
+    params: Promise<{
+        id: string;
+    }>;
+};
 
 function parseId(idParam: string) {
     const id = Number(idParam);
+
     if (!Number.isInteger(id) || id <= 0) {
         throw new BadRequestError("Invalid user id.");
     }
+
     return id;
 }
 
-export async function GET(request: Request, { params }: RouteParams) {
+export async function GET(
+    request: Request,
+    { params }: RouteParams
+) {
     try {
         const authUser = await AuthenticatinNeed(request);
         requireRole(authUser, UserRole.ADMIN);
 
-        const id = parseId(params.id);
-        const user = await userService.GetUserById(id);
+        const { id } = await params;
+        const user = await userService.GetUserById(parseId(id));
 
-        return Response.json(new ApiResponse("User fetched successfully", user));
+        return Response.json(
+            new ApiResponse("User fetched successfully", user)
+        );
     } catch (error) {
         return authErrorResponse(error);
     }
 }
 
-export async function PATCH(request: Request, { params }: RouteParams) {
+export async function PATCH(
+    request: Request,
+    { params }: RouteParams
+) {
     try {
         const authUser = await AuthenticatinNeed(request);
         requireRole(authUser, UserRole.ADMIN);
 
-        const id = parseId(params.id);
+        const { id } = await params;
+        const userId = parseId(id);
 
         const body = await request.json();
+
         const result = updateUserSchema.safeParse(body);
         if (!result.success) {
             throw new BadRequestError(result.error.issues[0]?.message);
         }
 
-        const user = await userService.UpdateUser(id, result.data);
+        const user = await userService.UpdateUser(userId, result.data);
 
-        return Response.json(new ApiResponse("User updated successfully", user));
+        return Response.json(
+            new ApiResponse("User updated successfully", user)
+        );
     } catch (error) {
         return authErrorResponse(error);
     }
 }
 
-export async function DELETE(request: Request, { params }: RouteParams) {
+export async function DELETE(
+    request: Request,
+    { params }: RouteParams
+) {
     try {
         const authUser = await AuthenticatinNeed(request);
         requireRole(authUser, UserRole.ADMIN);
 
-        const id = parseId(params.id);
-        await userService.DeleteUser(id);
+        const { id } = await params;
 
-        return Response.json(new ApiResponse("User deleted successfully", null));
+        await userService.DeleteUser(parseId(id));
+
+        return Response.json(
+            new ApiResponse("User deleted successfully", null)
+        );
     } catch (error) {
         return authErrorResponse(error);
     }

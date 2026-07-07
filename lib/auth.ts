@@ -1,11 +1,13 @@
 import { createHmac, timingSafeEqual } from "crypto";
 
 import { Env } from "@/constants/env";
+import { userRepository } from "@/repositories/user.repository";
+import { InternalServerError, UnauthorizedError } from "./response";
 
 export const AUTH_TOKEN_COOKIE_NAME = "auth-token";
 
 export type AuthUser = {
-  id?: string | number;
+  id?: number;
   email?: string;
   name?: string;
   role?: string;
@@ -31,7 +33,25 @@ export async function AuthenticatinNeed(request: Request): Promise<AuthUser> {
     throw new AuthenticationError("Missing authentication token");
   }
 
-  return verifyJwtToken(token);
+  const tokenPayload = await verifyJwtToken(token);
+
+  if (typeof tokenPayload.id !== "number") {
+    throw new AuthenticationError("Invalid authentication token");
+  }
+
+  const dbUser = await userRepository.getUserById(tokenPayload.id);
+
+  if (!dbUser) {
+    throw new UnauthorizedError("User no longer exists");
+  }
+
+  if (!dbUser.isActive) {
+    throw new UnauthorizedError("User account is deactivated");
+  }
+
+  const { passwordHash, ...safeUser } = dbUser;
+
+  return safeUser as AuthUser;
 }
 
 export function authErrorResponse(error: unknown) {

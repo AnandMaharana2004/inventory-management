@@ -41,6 +41,13 @@ enum DiscountAttribute {
   PER_AMOUNT
 }
 
+enum RateBasis {
+  PIECE_EXCL_GST
+  PIECE_INCL_GST
+  PACK_EXCL_GST
+  PACK_INCL_GST
+}
+
 model User {
   id Int @id @default(autoincrement())
 
@@ -190,6 +197,8 @@ model PoDtl {
   sgstPct Decimal @db.Decimal(5, 2)
 
   netAmount Decimal @db.Decimal(18, 2)
+
+  rateBasis RateBasis @default(PIECE_EXCL_GST)
 
   po   PoHdr      @relation(fields: [poId], references: [id])
   item ItemMaster @relation(fields: [itemId], references: [id])
