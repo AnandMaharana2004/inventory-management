@@ -8,72 +8,87 @@ import { itemRepository } from "@/repositories/item.repository";
 import { vendorRepository } from "@/repositories/vendor.repository";
 import type { CreatePurchaseInput } from "@/validation/purchase.validation";
 
-// Money math via floating point is fine for now, but rounding errors can compound
-// over many lines — flagged at the end, worth revisiting with Decimal.js arithmetic later.
+
 const round2 = (n: number) => Math.round(n * 100) / 100;
+
+type PurchaseDetailInput = CreatePurchaseInput["details"][number];
+
+const computePurchaseLine = (
+    line: PurchaseDetailInput,
+    item: { packSize: number; gstPct: number }
+) => {
+    // Stage 1: quantity calculation
+    const totalPieces = line.packQty * item.packSize + line.looseQty;
+
+    const isPackRate = line.rateBasis.startsWith("PACK");
+    const isInclGst = line.rateBasis.endsWith("INCL_GST");
+    const enteredPieceRate = isPackRate
+        ? line.purchaseRate / item.packSize
+        : line.purchaseRate;
+
+    const gstPct = item.gstPct;
+    const pieceRateExclGst = isInclGst
+        ? enteredPieceRate / (1 + gstPct / 100)
+        : enteredPieceRate;
+    const pieceRateInclGst = isInclGst
+        ? enteredPieceRate
+        : enteredPieceRate * (1 + gstPct / 100);
+
+
+    const lineAmount = totalPieces * pieceRateExclGst;
+    const discountAmount = (lineAmount * line.discountPct) / 100;
+    const taxableAmount = lineAmount - discountAmount;
+
+    const cgstPct = gstPct / 2;
+    const sgstPct = gstPct / 2;
+    const cgstAmount = (taxableAmount * cgstPct) / 100;
+    const sgstAmount = (taxableAmount * sgstPct) / 100;
+
+
+    const netAmount = taxableAmount + cgstAmount + sgstAmount;
+
+    return {
+        itemId: line.itemId,
+        packQty: line.packQty,
+        looseQty: line.looseQty,
+        totalPieces,
+        purchaseRate: line.purchaseRate, // raw entered value, kept only for audit
+        rateBasis: line.rateBasis,
+        pieceRateExclGst, // normalized per-piece cost, excl GST — used for unitCost
+        pieceRateInclGst,
+        lineAmount,
+        discountPct: line.discountPct,
+        discountAmount,
+        taxableAmount,
+        cgstPct,
+        sgstPct,
+        cgstAmount,
+        sgstAmount,
+        netAmount,
+    };
+};
 
 const CreatePurchase = async (body: CreatePurchaseInput, createdById: number) => {
     const { poDate, invoiceNumber, vendorId, details } = body;
 
-    // Confirm vendor exists
     const vendor = await vendorRepository.getVendorById(vendorId);
     if (!vendor) {
         throw new BadRequestError("Vendor does not exist.");
     }
 
-    // Confirm every item exists + is active, and compute line-level amounts.
-    // All done BEFORE the transaction starts — no point holding a DB transaction
-    // open while we're still validating input.
     const computedLines = await Promise.all(
         details.map(async (line) => {
             const item = await itemRepository.getItemById(line.itemId);
             if (!item) throw new BadRequestError(`Item with id ${line.itemId} does not exist.`);
             if (!item.isActive) throw new BadRequestError(`Item "${item.itemDesc}" is inactive and cannot be purchased.`);
 
-            const totalPieces = line.packQty * item.packSize + line.looseQty;
-            const isPackRate = line.rateBasis.startsWith("PACK");
-            const isInclGst = line.rateBasis.endsWith("INCL_GST");
-
-            // Step 1: normalize whatever the user entered into a per-piece rate
-            const perPieceRate = isPackRate ? line.purchaseRate / item.packSize : line.purchaseRate;
-
-            const gstPct = item.gstPct.toNumber();
-            const cgstPct = round2(gstPct / 2);
-            const sgstPct = round2(gstPct / 2);
-
-            const grossAmount = round2(totalPieces * perPieceRate);
-            const discountAmount = round2((grossAmount * line.discountPct) / 100);
-            const discountedAmount = round2(grossAmount - discountAmount);
-
-            // Step 2: if the rate already had GST baked in, extract it; otherwise add it
-            const taxableAmount = isInclGst
-                ? round2(discountedAmount / (1 + gstPct / 100))
-                : discountedAmount;
-
-            const cgstAmount = round2((taxableAmount * cgstPct) / 100);
-            const sgstAmount = round2((taxableAmount * sgstPct) / 100);
-            const netAmount = round2(taxableAmount + cgstAmount + sgstAmount);
-
-            return {
-                itemId: line.itemId,
-                packQty: line.packQty,
-                looseQty: line.looseQty,
-                totalPieces,
-                purchaseRate: line.purchaseRate, // keep the raw entered value for audit
-                rateBasis: line.rateBasis,
-                lineAmount: grossAmount,
-                discountPct: line.discountPct,
-                discountAmount,
-                cgstPct,
-                sgstPct,
-                cgstAmount,
-                sgstAmount,
-                netAmount,
-            };
+            return computePurchaseLine(line, {
+                packSize: item.packSize,
+                gstPct: item.gstPct.toNumber(),
+            });
         })
     );
 
-    // Header totals are just the sum of every line
     const totalAmount = round2(computedLines.reduce((sum, l) => sum + l.lineAmount, 0));
     const discountAmount = round2(computedLines.reduce((sum, l) => sum + l.discountAmount, 0));
     const cgstAmount = round2(computedLines.reduce((sum, l) => sum + l.cgstAmount, 0));
@@ -99,18 +114,17 @@ const CreatePurchase = async (body: CreatePurchaseInput, createdById: number) =>
                     looseQty: line.looseQty,
                     totalPieces: line.totalPieces,
                     purchaseRate: line.purchaseRate,
-                    lineAmount: line.lineAmount,
+                    rateBasis: line.rateBasis,
+                    lineAmount: round2(line.lineAmount),
                     discountPct: line.discountPct,
-                    discountAmount: line.discountAmount,
-                    cgstPct: line.cgstPct,
-                    sgstPct: line.sgstPct,
-                    netAmount: line.netAmount,
+                    discountAmount: round2(line.discountAmount),
+                    cgstPct: round2(line.cgstPct),
+                    sgstPct: round2(line.sgstPct),
+                    netAmount: round2(line.netAmount),
                 })),
             },
         });
 
-        // 2. Bump stock for every line — and create the ItemStock row if this
-        // is the item's very first-ever purchase (item creation doesn't seed one)
         const ledgerEntries = [];
         for (const line of computedLines) {
             const existingStock = await tx.itemStock.findUnique({
@@ -124,7 +138,6 @@ const CreatePurchase = async (body: CreatePurchaseInput, createdById: number) =>
                     currentStockPieces: line.totalPieces,
                 });
 
-            // 3. One ledger row per line, carrying the running balance right after this purchase
             ledgerEntries.push({
                 txnDate: poDate,
                 item: { connect: { id: line.itemId } },
@@ -134,7 +147,7 @@ const CreatePurchase = async (body: CreatePurchaseInput, createdById: number) =>
                 qtyInPieces: line.totalPieces,
                 qtyOutPieces: 0,
                 balanceAfter: updatedStock.currentStockPieces,
-                unitCost: line.purchaseRate,
+                unitCost: round2(line.pieceRateExclGst),
                 createdBy: { connect: { id: createdById } },
             });
         }

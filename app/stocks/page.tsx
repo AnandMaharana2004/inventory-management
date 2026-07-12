@@ -1,10 +1,9 @@
-import { PageHeader } from "@/components/page-header";
+import { StockList } from "@/features/stock";
 
-export default function StocksPage() {
-  return (
-    <PageHeader
-      title="Stock"
-      description="Monitor available stock, low-stock items, and movement history."
-    />
-  );
+export const metadata = {
+  title: "Stock Management Ledger | System Dashboard",
+};
+
+export default function StockPage() {
+  return <StockList />;
 }
