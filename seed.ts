@@ -19,6 +19,7 @@
 import { createHash } from "crypto";
 import { DiscountAttribute, PaymentStatus, ReferenceType, StockTxnType, UserRole } from "./lib/generated/prisma/enums";
 import prisma from "./lib/prisma";
+import { hashPassword } from "./lib/cripto";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -119,7 +120,7 @@ export async function seedDatabase() {
     // Users
     // -------------------------------------------------------------------
     console.log("Seeding users...");
-    const passwordHash = placeholderHash("Password@123");
+    const passwordHash = await hashPassword("Password@123");
 
     const admin = await prisma.user.create({
         data: {
