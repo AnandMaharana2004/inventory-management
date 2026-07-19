@@ -98,9 +98,13 @@ export function useUsers() {
     }, [search, fetchUsers]);
 
     const handleFormSubmit = useCallback(async (values: UserFormValues) => {
+        // Guard check to prevent submission out of read-only mode states
+        if (mode === "view") return;
+
         setIsSubmitting(true);
         setFormError(null);
         try {
+            // TypeScript now safely knows mode can only be "create" or "edit" here
             const payload = formValuesToApi(values, mode);
             if (mode === "create") {
                 await createUser(payload);

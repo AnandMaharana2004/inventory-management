@@ -32,7 +32,8 @@ export function ItemForm({
         reset,
         formState: { errors },
     } = useForm<ItemFormValues>({
-        resolver: zodResolver(itemSchema),
+        // Passing any to the resolver bypasses the strict input/output object alignment bug
+        resolver: zodResolver(itemSchema as any),
         defaultValues: DEFAULT_ITEM_FORM_VALUES,
     });
 
