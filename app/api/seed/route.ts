@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { seedDatabase } from "@/seed";
+import { userSeed } from "@/userSeed";
 
 export async function GET() {
   if (process.env.NODE_ENV === "production") {
@@ -10,7 +11,8 @@ export async function GET() {
   }
 
   try {
-    const summary = await seedDatabase();
+    // const summary = await seedDatabase();
+    const summary = await userSeed();
     return NextResponse.json({ success: true, summary });
   } catch (error) {
     console.error("Seeding failed:", error);
