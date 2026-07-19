@@ -1,9 +1,9 @@
-import React from 'react'
+import { SaleList } from "@/features/sales";
 
-function page() {
-  return (
-    <div>sales page</div>
-  )
+export const metadata = {
+  title: "Sales Billing Register | Corporate Dashboard",
+};
+
+export default function SalesPage() {
+  return <SaleList />;
 }
-
-export default page
