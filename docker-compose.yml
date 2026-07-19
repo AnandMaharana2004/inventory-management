@@ -17,6 +17,8 @@ services:
 
   app:
     build: .
+    env_file:
+      - .env
     container_name: inventory-app
     restart: unless-stopped
     depends_on:

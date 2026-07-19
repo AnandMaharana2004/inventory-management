@@ -1,5 +1,5 @@
 # ---------- Dependencies ----------
-FROM node:22-alpine AS deps
+FROM node:24-alpine AS deps
 
 WORKDIR /app
 
@@ -21,7 +21,7 @@ RUN npx prisma generate
 RUN npm run build
 
 # ---------- Production ----------
-FROM node:22-alpine
+FROM node:24-alpine
 
 WORKDIR /app
 
@@ -32,11 +32,9 @@ COPY package*.json ./
 RUN npm ci --omit=dev
 
 COPY --from=builder /app/.next ./.next
-COPY --from=builder /app/public ./public
 COPY --from=builder /app/prisma ./prisma
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
-COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 COPY --from=builder /app/lib/generated ./lib/generated
+COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 
 EXPOSE 3000
 
