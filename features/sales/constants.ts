@@ -11,11 +11,18 @@ export const DEFAULT_SALE_LINE_VALUES = {
   packQty: 0,
   looseQty: 0,
   saleRate: 0,
+  hasLineDiscount: false,
+  lineDiscountType: "PERCENT" as const,
+  lineDiscountValue: 0,
 };
 
 export const DEFAULT_SALE_FORM_VALUES = {
   billDate: new Date().toISOString().split("T")[0],
   customerId: 0,
   paymentStatus: "PENDING" as PaymentStatus,
+  applyDefaultDiscounts: true,
+  hasBillDiscount: false,
+  billDiscountType: "FLAT" as const,
+  billDiscountValue: 0,
   details: [],
 };

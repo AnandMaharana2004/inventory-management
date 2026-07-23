@@ -2,6 +2,13 @@ export type SaleMode = "create" | "view";
 
 export type PaymentStatus = "PAID" | "PARTIAL" | "PENDING";
 
+export type DiscountType = "PERCENT" | "FLAT";
+
+export type ManualDiscountPayload = {
+  type: DiscountType;
+  value: number;
+};
+
 export type SaleItemDetail = {
   id: number;
   billId: number;
@@ -54,11 +61,14 @@ export type CreateSaleDetailPayload = {
   packQty: number;
   looseQty: number;
   saleRate: number;
+  discount?: ManualDiscountPayload;
 };
 
 export type CreateSalePayload = {
   billDate: string;
   customerId: number;
   paymentStatus: PaymentStatus;
+  applyDefaultDiscounts: boolean;
+  billDiscount?: ManualDiscountPayload;
   details: CreateSaleDetailPayload[];
 };

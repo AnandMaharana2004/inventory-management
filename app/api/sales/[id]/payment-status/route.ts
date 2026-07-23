@@ -1,48 +1,37 @@
+// app/api/sales/[id]/payment-status/route.ts
 import { UserRole } from "@/lib/generated/prisma/client";
 import { AuthenticatinNeed, authErrorResponse } from "@/lib/auth";
 import { requireRole } from "@/lib/authorization";
 import { ApiResponse, BadRequestError } from "@/lib/response";
 import { saleService } from "@/services/sale.service";
-import { updatePaymentStatusSchema } from "@/validation/sale.validation";
+import { saleIdParamSchema, updatePaymentStatusSchema } from "@/validation/sale.validation";
 
-type RouteParams = {
-    params: Promise<{
-        id: string;
-    }>;
-};
+type RouteParams = { params: Promise<{ id: string }> };
 
-export async function PATCH(
-    request: Request,
-    { params }: RouteParams
-) {
+export async function PATCH(request: Request, { params }: RouteParams) {
     try {
+        // Authenticate
         const authUser = await AuthenticatinNeed(request);
 
-        // Payment/collections tracking — admin or manager only, not salesman
-        requireRole(authUser, UserRole.ADMIN, UserRole.MANAGER);
+        // Authorize — any role can update payment status
+        requireRole(authUser, UserRole.ADMIN, UserRole.MANAGER, UserRole.SALESMAN);
 
         const { id } = await params;
-
-        const saleId = Number(id);
-        if (!Number.isInteger(saleId) || saleId <= 0) {
-            throw new BadRequestError("Invalid sale id.");
+        const idResult = saleIdParamSchema.safeParse({ id });
+        if (!idResult.success) {
+            throw new BadRequestError(idResult.error.issues[0]?.message);
         }
 
         const body = await request.json();
-
-        const result = updatePaymentStatusSchema.safeParse(body);
-        if (!result.success) {
-            throw new BadRequestError(result.error.issues[0]?.message);
+        const bodyResult = updatePaymentStatusSchema.safeParse(body);
+        if (!bodyResult.success) {
+            throw new BadRequestError(bodyResult.error.issues[0]?.message);
         }
 
-        const sale = await saleService.UpdatePaymentStatus(
-            saleId,
-            result.data.paymentStatus
-        );
+        // Business Logic
+        const sale = await saleService.UpdatePaymentStatus(idResult.data.id, bodyResult.data);
 
-        return Response.json(
-            new ApiResponse("Payment status updated successfully", sale)
-        );
+        return Response.json(new ApiResponse("Payment status updated successfully", sale));
     } catch (error) {
         return authErrorResponse(error);
     }

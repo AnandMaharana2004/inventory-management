@@ -1,265 +1,365 @@
+// services/sale.service.ts
 import prisma from "@/lib/prisma";
 import { ReferenceType, StockTxnType } from "@/lib/generated/prisma/client";
 import { DiscountAttribute, PaymentStatus } from "@/lib/generated/prisma/enums";
-import { BadRequestError, ConflictError, NotFoundError } from "@/lib/response";
+
 import { saleRepository } from "@/repositories/sale.repository";
+import { saleDetailRepository } from "@/repositories/sale.repository-detail";
 import { stockRepository } from "@/repositories/stock.repository";
 import { ledgerRepository } from "@/repositories/ledger.repository";
-import { itemRepository } from "@/repositories/item.repository";
-import { customerRepository } from "@/repositories/customer.repository";
 import { discountRepository } from "@/repositories/discount.repository";
-import type { CreateSaleInput } from "@/validation/sale.validation";
+import { customerRepository } from "@/repositories/customer.repository";
+import { itemRepository } from "@/repositories/item.repository";
 
-const round2 = (n: number) => Math.round(n * 100) / 100;
+import {
+    NotFoundError,
+    BadRequestError,
+    ConflictError,
+} from "@/lib/response";
 
-// Converts a raw quantity into whatever unit a discount rule is expressed in
-const toAttributeQty = (
-    attribute: DiscountAttribute,
-    totalPieces: number,
-    lineAmount: number,
-    packSize: number
-): number => {
-    switch (attribute) {
-        case DiscountAttribute.PER_ITEM:
-            return totalPieces;
-        case DiscountAttribute.PER_PACK:
-            return Math.floor(totalPieces / packSize);
-        case DiscountAttribute.PER_AMOUNT:
-            return lineAmount;
-    }
-};
+import type {
+    CreateSaleInput,
+    UpdatePaymentStatusInput,
+} from "@/validation/sale.validation";
 
-const CreateSale = async (body: CreateSaleInput, createdById: number) => {
-    const { billDate, customerId, paymentStatus, details } = body;
+// ── Internal helpers (not exported — pure calculation, no DB/business rules) ──
 
-    const customer = await customerRepository.getCustomerById(customerId);
-    if (!customer) {
-        throw new BadRequestError("Customer does not exist.");
-    }
+function round2(value: number) {
+    return Math.round((value + Number.EPSILON) * 100) / 100;
+}
 
-    // Fetch + validate every item, compute pre-discount line figures
-    const baseLines = await Promise.all(
-        details.map(async (line) => {
-            const item = await itemRepository.getItemById(line.itemId);
+function computeManualDiscount(
+    baseAmount: number,
+    discount: { type: "PERCENT" | "FLAT"; value: number } | undefined
+) {
+    if (!discount) return 0;
+
+    const raw =
+        discount.type === "PERCENT"
+            ? (baseAmount * discount.value) / 100
+            : discount.value;
+
+    return Math.min(Math.max(round2(raw), 0), baseAmount);
+}
+
+export const saleService = {
+    // ── Create ───────────────────────────────────────────────────
+
+    async CreateSale(input: CreateSaleInput, userId: number) {
+        const customer = await customerRepository.getCustomerById(
+            input.customerId
+        );
+        if (!customer) {
+            throw new NotFoundError(
+                `Customer ${input.customerId} does not exist`
+            );
+        }
+
+        // Load every item referenced in the bill once
+        const itemIds = [...new Set(input.details.map((d) => d.itemId))];
+        const items = await Promise.all(
+            itemIds.map((id) => itemRepository.getItemById(id))
+        );
+
+        const itemMap = new Map<number, NonNullable<(typeof items)[number]>>();
+        items.forEach((item, idx) => {
             if (!item) {
-                throw new BadRequestError(`Item with id ${line.itemId} does not exist.`);
+                throw new NotFoundError(
+                    `Item ${itemIds[idx]} does not exist`
+                );
             }
             if (!item.isActive) {
-                throw new BadRequestError(`Item "${item.itemDesc}" is inactive and cannot be sold.`);
+                throw new BadRequestError(
+                    `Item ${item.itemCode} is not active`
+                );
+            }
+            itemMap.set(item.id, item);
+        });
+
+        // Build base line data: quantities, gross amount, manual discount
+        type Line = {
+            itemId: number;
+            item: NonNullable<(typeof items)[number]>;
+            packQty: number;
+            looseQty: number;
+            totalPieces: number;
+            saleRate: number;
+            lineAmount: number;
+            manualDiscountAmount: number;
+            defaultDiscountAmount: number;
+        };
+
+        const lines: Line[] = input.details.map((detail) => {
+            const item = itemMap.get(detail.itemId)!;
+            const totalPieces =
+                detail.packQty * item.packSize + detail.looseQty;
+
+            if (totalPieces <= 0) {
+                throw new BadRequestError(
+                    `Quantity for item ${item.itemCode} must be greater than 0`
+                );
             }
 
-            const totalPieces = line.packQty * item.packSize + line.looseQty;
-            const lineAmount = round2(totalPieces * line.saleRate);
+            const lineAmount = round2(detail.saleRate * totalPieces);
+            const manualDiscountAmount = computeManualDiscount(
+                lineAmount,
+                detail.discount
+            );
 
             return {
-                itemId: line.itemId,
-                packQty: line.packQty,
-                looseQty: line.looseQty,
+                itemId: detail.itemId,
+                item,
+                packQty: detail.packQty,
+                looseQty: detail.looseQty,
                 totalPieces,
-                saleRate: line.saleRate,
+                saleRate: detail.saleRate,
                 lineAmount,
-                packSize: item.packSize,
-                gstPct: item.gstPct.toNumber(),
+                manualDiscountAmount,
+                defaultDiscountAmount: 0,
             };
-        })
-    );
+        });
 
-    // Aggregate demand per item — the same item can appear on more than one line
-    const demandByItem = new Map<number, number>();
-    const amountByItem = new Map<number, number>();
-    const packSizeByItem = new Map<number, number>();
-    for (const line of baseLines) {
-        demandByItem.set(line.itemId, (demandByItem.get(line.itemId) ?? 0) + line.totalPieces);
-        amountByItem.set(line.itemId, (amountByItem.get(line.itemId) ?? 0) + line.lineAmount);
-        packSizeByItem.set(line.itemId, line.packSize);
-    }
-
-    // --- Stock sufficiency pre-check (fast-fail before opening a transaction) ---
-    for (const [itemId, demand] of demandByItem.entries()) {
-        const stock = await stockRepository.getStockByItemId(itemId);
-        const available = stock?.currentStockPieces ?? 0;
-        if (available < demand) {
-            throw new ConflictError(
-                `Insufficient stock for item id ${itemId}. Available: ${available}, Required: ${demand}.`
+        // Stock sufficiency pre-check (see known race-condition note in
+        // stockService.AdjustStock — same tradeoff applies here)
+        for (const line of lines) {
+            const stock = await stockRepository.getStockByItemId(
+                line.itemId
             );
-        }
-    }
-
-    // --- Discount lookup ---
-    // Only discounts active + within date range as of the bill date, and only ones
-    // touching an item actually on this bill (on either side of the offer).
-    const itemIdsOnBill = new Set(demandByItem.keys());
-    const currentDiscounts = await discountRepository.getCurrentDiscounts(billDate);
-    const relevantDiscounts = currentDiscounts.filter(
-        (d) => itemIdsOnBill.has(d.onItemId) || itemIdsOnBill.has(d.discountedItemId)
-    );
-
-    const computedLines = baseLines.map((line) => {
-        let discountAmount = 0;
-
-        // Discounts where THIS line is the one receiving the discount
-        const applicable = relevantDiscounts.filter((d) => d.discountedItemId === line.itemId);
-
-        for (const discount of applicable) {
-            const onItemPieces = demandByItem.get(discount.onItemId) ?? 0;
-            const onItemAmount = amountByItem.get(discount.onItemId) ?? 0;
-            const onItemPackSize = packSizeByItem.get(discount.onItemId) ?? line.packSize;
-
-            const onItemQty = toAttributeQty(
-                discount.perAttribute,
-                onItemPieces,
-                onItemAmount,
-                onItemPackSize
-            );
-
-            const attributeQty = discount.attributeQty.toNumber();
-            const multiplier = Math.floor(onItemQty / attributeQty);
-
-            if (multiplier < 1) continue; // trigger threshold not reached
-
-            const discountedQty = discount.discountedQty.toNumber() * multiplier;
-
-            let amount = 0;
-            switch (discount.discountedAttribute) {
-                case DiscountAttribute.PER_ITEM:
-                    amount = Math.min(discountedQty, line.totalPieces) * line.saleRate;
-                    break;
-                case DiscountAttribute.PER_PACK:
-                    amount = Math.min(discountedQty * line.packSize, line.totalPieces) * line.saleRate;
-                    break;
-                case DiscountAttribute.PER_AMOUNT:
-                    amount = discountedQty;
-                    break;
-            }
-
-            discountAmount += amount;
-        }
-
-        // Stacked discounts can never exceed the line's own value
-        discountAmount = round2(Math.min(discountAmount, line.lineAmount));
-        const discountPct = line.lineAmount > 0 ? round2((discountAmount / line.lineAmount) * 100) : 0;
-
-        const taxableAmount = round2(line.lineAmount - discountAmount);
-        const cgstPct = round2(line.gstPct / 2);
-        const sgstPct = round2(line.gstPct / 2);
-        const cgstAmount = round2((taxableAmount * cgstPct) / 100);
-        const sgstAmount = round2((taxableAmount * sgstPct) / 100);
-        const netAmount = round2(taxableAmount + cgstAmount + sgstAmount);
-
-        return {
-            itemId: line.itemId,
-            packQty: line.packQty,
-            looseQty: line.looseQty,
-            totalPieces: line.totalPieces,
-            saleRate: line.saleRate,
-            lineAmount: line.lineAmount,
-            discountPct,
-            discountAmount,
-            cgstPct,
-            sgstPct,
-            cgstAmount,
-            sgstAmount,
-            netAmount,
-        };
-    });
-
-    const totalAmount = round2(computedLines.reduce((sum, l) => sum + l.lineAmount, 0));
-    const discountAmountTotal = round2(computedLines.reduce((sum, l) => sum + l.discountAmount, 0));
-    const cgstAmount = round2(computedLines.reduce((sum, l) => sum + l.cgstAmount, 0));
-    const sgstAmount = round2(computedLines.reduce((sum, l) => sum + l.sgstAmount, 0));
-    const netAmount = round2(computedLines.reduce((sum, l) => sum + l.netAmount, 0));
-
-    return prisma.$transaction(async (tx) => {
-        // Re-check stock inside the transaction — narrows (does not fully close)
-        // the race window between the pre-check above and this write.
-        for (const [itemId, demand] of demandByItem.entries()) {
-            const stock = await tx.itemStock.findUnique({ where: { itemId } });
-            const available = stock?.currentStockPieces ?? 0;
-            if (available < demand) {
+            if (!stock || stock.currentStockPieces < line.totalPieces) {
                 throw new ConflictError(
-                    `Insufficient stock for item id ${itemId}. Available: ${available}, Required: ${demand}.`
+                    `Insufficient stock for item ${line.item.itemCode}. Available: ${stock?.currentStockPieces ?? 0
+                    }, requested: ${line.totalPieces}`
                 );
             }
         }
 
-        const bill = await saleRepository.create(tx, {
-            billDate,
-            totalAmount,
-            discountAmount: discountAmountTotal,
-            cgstAmount,
-            sgstAmount,
-            netAmount,
-            paymentStatus,
-            customer: { connect: { id: customerId } },
-            createdBy: { connect: { id: createdById } },
-            details: {
-                create: computedLines.map((line) => ({
-                    item: { connect: { id: line.itemId } },
-                    packQty: line.packQty,
-                    looseQty: line.looseQty,
-                    totalPieces: line.totalPieces,
-                    saleRate: line.saleRate,
-                    lineAmount: line.lineAmount,
-                    discountPct: line.discountPct,
-                    discountAmount: line.discountAmount,
-                    cgstPct: line.cgstPct,
-                    sgstPct: line.sgstPct,
-                    netAmount: line.netAmount,
-                })),
-            },
-        });
+        // Bill-level toggle: auto-apply eligible default discounts across
+        // the whole bill. A discount only applies if BOTH the trigger item
+        // (onItemId) and the target item (discountedItemId) are present as
+        // line items in this bill.
+        if (input.applyDefaultDiscounts) {
+            const currentDiscounts = await discountRepository.getCurrentDiscounts(
+                input.billDate
+            );
+            const lineByItemId = new Map(lines.map((l) => [l.itemId, l]));
 
-        const ledgerEntries = [];
-        for (const line of computedLines) {
-            const updatedStock = await stockRepository.decreaseStock(tx, line.itemId, line.totalPieces);
+            for (const discount of currentDiscounts) {
+                const triggerLine = lineByItemId.get(discount.onItemId);
+                const targetLine = lineByItemId.get(discount.discountedItemId);
 
-            ledgerEntries.push({
-                txnDate: billDate,
-                item: { connect: { id: line.itemId } },
-                txnType: StockTxnType.SALE,
-                referenceType: ReferenceType.BILL,
-                referenceId: bill.id,
-                qtyInPieces: 0,
-                qtyOutPieces: line.totalPieces,
-                balanceAfter: updatedStock.currentStockPieces,
-                unitPrice: line.saleRate,
-                createdBy: { connect: { id: createdById } },
-            });
+                if (!triggerLine || !targetLine) continue;
+
+                const qualifyingQty =
+                    discount.perAttribute === DiscountAttribute.PER_ITEM
+                        ? triggerLine.totalPieces
+                        : discount.perAttribute === DiscountAttribute.PER_PACK
+                            ? triggerLine.packQty
+                            : triggerLine.lineAmount; // PER_AMOUNT
+
+                if (qualifyingQty < Number(discount.attributeQty)) continue;
+
+                const discountValue =
+                    discount.discountedAttribute === DiscountAttribute.PER_ITEM
+                        ? Number(discount.discountedQty) * targetLine.saleRate
+                        : discount.discountedAttribute ===
+                            DiscountAttribute.PER_PACK
+                            ? Number(discount.discountedQty) *
+                            targetLine.item.packSize *
+                            targetLine.saleRate
+                            : Number(discount.discountedQty); // PER_AMOUNT
+
+                const remainingRoom =
+                    targetLine.lineAmount - targetLine.manualDiscountAmount;
+
+                targetLine.defaultDiscountAmount = round2(
+                    Math.min(
+                        remainingRoom,
+                        targetLine.defaultDiscountAmount + discountValue
+                    )
+                );
+            }
         }
 
-        await ledgerRepository.createMany(tx, ledgerEntries);
+        // Finalize each line: total discount, GST, net amount
+        const finalizedLines = lines.map((line) => {
+            const discountAmount = round2(
+                line.manualDiscountAmount + line.defaultDiscountAmount
+            );
+            const taxableAmount = round2(line.lineAmount - discountAmount);
+            const discountPct =
+                line.lineAmount > 0
+                    ? round2((discountAmount / line.lineAmount) * 100)
+                    : 0;
 
-        return bill;
-    });
-};
+            const gstPct = Number(line.item.gstPct);
+            const cgstPct = round2(gstPct / 2);
+            const sgstPct = round2(gstPct / 2);
+            const cgstAmount = round2((taxableAmount * cgstPct) / 100);
+            const sgstAmount = round2((taxableAmount * sgstPct) / 100);
+            const netAmount = round2(taxableAmount + cgstAmount + sgstAmount);
 
-const ListSales = async (
-    customerId?: number,
-    paymentStatus?: PaymentStatus,
-    startDate?: Date,
-    endDate?: Date
-) => {
-    if (customerId) return saleRepository.getSalesByCustomer(customerId);
-    if (paymentStatus) return saleRepository.getSalesByPaymentStatus(paymentStatus);
-    if (startDate && endDate) return saleRepository.getSalesByDateRange(startDate, endDate);
-    return saleRepository.getAllSales();
-};
+            return {
+                ...line,
+                discountAmount,
+                discountPct,
+                cgstPct,
+                sgstPct,
+                cgstAmount,
+                sgstAmount,
+                netAmount,
+            };
+        });
 
-const GetSaleById = async (id: number) => {
-    const sale = await saleRepository.getSaleById(id);
-    if (!sale) throw new NotFoundError("Sale bill not found.");
-    return sale;
-};
+        // Bill-level totals
+        const totalAmount = round2(
+            finalizedLines.reduce((sum, l) => sum + l.lineAmount, 0)
+        );
+        const lineDiscountTotal = round2(
+            finalizedLines.reduce((sum, l) => sum + l.discountAmount, 0)
+        );
+        const cgstAmount = round2(
+            finalizedLines.reduce((sum, l) => sum + l.cgstAmount, 0)
+        );
+        const sgstAmount = round2(
+            finalizedLines.reduce((sum, l) => sum + l.sgstAmount, 0)
+        );
+        const subtotalAfterLines = round2(
+            finalizedLines.reduce((sum, l) => sum + l.netAmount, 0)
+        );
 
-const UpdatePaymentStatus = async (id: number, paymentStatus: PaymentStatus) => {
-    const sale = await saleRepository.getSaleById(id);
-    if (!sale) throw new NotFoundError("Sale bill not found.");
-    return saleRepository.updatePaymentStatus(id, paymentStatus);
-};
+        // Bill-level manual discount is a flat reduction on the final
+        // payable amount (not re-proportioned across GST), stacked on top
+        // of whatever line-level and default discounts already applied.
+        const billDiscountAmount = computeManualDiscount(
+            subtotalAfterLines,
+            input.billDiscount
+        );
 
-export const saleService = {
-    CreateSale,
-    ListSales,
-    GetSaleById,
-    UpdatePaymentStatus,
+        const netAmount = round2(subtotalAfterLines - billDiscountAmount);
+        const discountAmount = round2(lineDiscountTotal + billDiscountAmount);
+
+        return prisma.$transaction(async (tx) => {
+            const bill = await saleRepository.create(tx, {
+                billDate: input.billDate,
+                paymentStatus: input.paymentStatus,
+                totalAmount,
+                discountAmount,
+                cgstAmount,
+                sgstAmount,
+                netAmount,
+                customer: { connect: { id: input.customerId } },
+                createdBy: { connect: { id: userId } },
+                details: {
+                    create: finalizedLines.map((line) => ({
+                        packQty: line.packQty,
+                        looseQty: line.looseQty,
+                        totalPieces: line.totalPieces,
+                        saleRate: line.saleRate,
+                        lineAmount: line.lineAmount,
+                        discountPct: line.discountPct,
+                        discountAmount: line.discountAmount,
+                        cgstPct: line.cgstPct,
+                        sgstPct: line.sgstPct,
+                        netAmount: line.netAmount,
+                        item: { connect: { id: line.itemId } },
+                    })),
+                },
+            });
+
+            for (const line of finalizedLines) {
+                const updatedStock = await stockRepository.decreaseStock(
+                    tx,
+                    line.itemId,
+                    line.totalPieces
+                );
+
+                await ledgerRepository.create(tx, {
+                    txnDate: input.billDate,
+                    txnType: StockTxnType.SALE,
+                    referenceType: ReferenceType.BILL,
+                    referenceId: bill.id,
+                    qtyOutPieces: line.totalPieces,
+                    balanceAfter: updatedStock.currentStockPieces,
+                    unitPrice: line.saleRate,
+                    item: { connect: { id: line.itemId } },
+                    createdBy: { connect: { id: userId } },
+                });
+            }
+
+            return bill;
+        });
+    },
+
+    // ── Reads ────────────────────────────────────────────────────
+
+    async GetSaleById(id: number) {
+        const sale = await saleRepository.getSaleById(id);
+
+        if (!sale) {
+            throw new NotFoundError(`Sale ${id} does not exist`);
+        }
+
+        return sale;
+    },
+
+    async ListSales(
+        customerId?: number,
+        paymentStatus?: PaymentStatus,
+        startDate?: Date,
+        endDate?: Date
+    ) {
+        if (startDate && endDate) {
+            return saleRepository.getSalesByDateRange(startDate, endDate);
+        }
+
+        if (customerId) {
+            return saleRepository.getSalesByCustomer(customerId);
+        }
+
+        if (paymentStatus) {
+            return saleRepository.getSalesByPaymentStatus(paymentStatus);
+        }
+
+        return saleRepository.getAllSales();
+    },
+
+    // ── Payment status ───────────────────────────────────────────
+
+    async UpdatePaymentStatus(id: number, input: UpdatePaymentStatusInput) {
+        const sale = await saleRepository.getSaleById(id);
+
+        if (!sale) {
+            throw new NotFoundError(`Sale ${id} does not exist`);
+        }
+
+        return saleRepository.updatePaymentStatus(id, input.paymentStatus);
+    },
+
+    // ── Cancel ───────────────────────────────────────────────────
+
+    async CancelSale(id: number) {
+        const sale = await saleRepository.getSaleForStockRollback(id);
+
+        if (!sale) {
+            throw new NotFoundError(`Sale ${id} does not exist`);
+        }
+
+        return prisma.$transaction(async (tx) => {
+            for (const detail of sale.details) {
+                await stockRepository.increaseStock(
+                    tx,
+                    detail.itemId,
+                    detail.totalPieces
+                );
+            }
+
+            await ledgerRepository.deleteByReference(
+                tx,
+                ReferenceType.BILL,
+                id
+            );
+            await saleDetailRepository.deleteByBillId(tx, id);
+            await saleRepository.deleteSale(tx, id);
+        });
+    },
 };

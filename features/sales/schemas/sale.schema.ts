@@ -1,21 +1,37 @@
 import { z } from "zod";
 
-export const saleDetailLineSchema = z.object({
-  itemId: z.number({ message: "Item selection is required" }).int().positive("Invalid item identifier"),
-  packQty: z.number({ message: "Pack Qty must be a number" }).min(0, "Cannot be negative"),
-  looseQty: z.number({ message: "Loose Qty must be a number" }).min(0, "Cannot be negative"),
-  saleRate: z.number({ message: "Sale rate must be a number" }).min(0.01, "Rate must be greater than 0"),
-}).refine((data) => data.packQty > 0 || data.looseQty > 0, {
-  message: "At least one of packQty or looseQty must be greater than 0",
-  path: ["packQty"],
-});
+export const manualDiscountSchema = z
+  .object({
+    type: z.enum(["PERCENT", "FLAT"]),
+    value: z.number().min(0, "Discount value cannot be negative"),
+  })
+  .optional();
+
+export const saleDetailLineSchema = z
+  .object({
+    itemId: z.number({ message: "Item selection is required" }).int().positive("Invalid item identifier"),
+    packQty: z.number({ message: "Pack Qty must be a number" }).min(0, "Cannot be negative"),
+    looseQty: z.number({ message: "Loose Qty must be a number" }).min(0, "Cannot be negative"),
+    saleRate: z.number({ message: "Sale rate must be a number" }).min(0.01, "Rate must be greater than 0"),
+    hasLineDiscount: z.boolean().default(false),
+    lineDiscountType: z.enum(["PERCENT", "FLAT"]).default("PERCENT"),
+    lineDiscountValue: z.number().min(0, "Cannot be negative").default(0),
+  })
+  .refine((data) => data.packQty > 0 || data.looseQty > 0, {
+    message: "At least one of packQty or looseQty must be greater than 0",
+    path: ["packQty"],
+  });
 
 export const saleSchema = z.object({
   billDate: z.string().min(1, "Billing transaction date is required"),
   customerId: z.number({ message: "Customer selection is required" }).int().positive("Invalid customer identifier"),
   paymentStatus: z.enum(["PAID", "PARTIAL", "PENDING"], {
-    message: "Please pick a valid initial payment status state",
+    message: "Please pick a valid payment status",
   }),
+  applyDefaultDiscounts: z.boolean().default(true),
+  hasBillDiscount: z.boolean().default(false),
+  billDiscountType: z.enum(["PERCENT", "FLAT"]).default("FLAT"),
+  billDiscountValue: z.number().min(0, "Cannot be negative").default(0),
   details: z.array(saleDetailLineSchema).min(1, "Transaction matrix requires at least 1 retail item row"),
 });
 
@@ -26,11 +42,26 @@ export function formValuesToApi(values: SaleFormValues) {
     billDate: new Date(values.billDate).toISOString(),
     customerId: values.customerId,
     paymentStatus: values.paymentStatus,
+    applyDefaultDiscounts: values.applyDefaultDiscounts,
+    billDiscount:
+      values.hasBillDiscount && values.billDiscountValue > 0
+        ? {
+          type: values.billDiscountType,
+          value: values.billDiscountValue,
+        }
+        : undefined,
     details: values.details.map((l) => ({
       itemId: l.itemId,
       packQty: l.packQty,
       looseQty: l.looseQty,
       saleRate: l.saleRate,
+      discount:
+        l.hasLineDiscount && l.lineDiscountValue > 0
+          ? {
+            type: l.lineDiscountType,
+            value: l.lineDiscountValue,
+          }
+          : undefined,
     })),
   };
 }

@@ -11,7 +11,7 @@ export async function getSales(filters?: { customerId?: number; paymentStatus?: 
 
   if (!response.ok) {
     const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.message || "Failed to fetch retail sales history registry.");
+    throw new Error(errorData.message || "Failed to fetch retail sales history register.");
   }
 
   const json = await response.json();
@@ -60,4 +60,13 @@ export async function updateSalePaymentStatus(id: number, paymentStatus: Payment
 
   const json = await response.json();
   return json.data;
+}
+
+export async function cancelSale(id: number): Promise<void> {
+  const response = await fetch(`/api/sales/${id}/cancel`, { method: "POST" });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    throw new Error(errorData.message || "Failed to cancel sale transaction and rollback stock.");
+  }
 }

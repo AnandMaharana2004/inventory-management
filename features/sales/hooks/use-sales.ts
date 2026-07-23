@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import type { Sale, SaleMode, PaymentStatus } from "../types/sale";
-import { getSales, getSaleById, createSale, updateSalePaymentStatus } from "../api/sale.api";
+import { getSales, getSaleById, createSale, updateSalePaymentStatus, cancelSale } from "../api/sale.api";
 import { type SaleFormValues, formValuesToApi } from "../schemas/sale.schema";
 
 export function useSales() {
@@ -22,6 +22,11 @@ export function useSales() {
   const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+
+  // Cancellation State Control
+  const [isCancelOpen, setIsCancelOpen] = useState(false);
+  const [saleToCancel, setSaleToCancel] = useState<Sale | null>(null);
+  const [isCancelling, setIsCancelling] = useState(false);
 
   const fetchSales = useCallback(async () => {
     setIsLoading(true);
@@ -74,7 +79,19 @@ export function useSales() {
     setFormError(null);
   }, []);
 
+  const openCancelConfirm = useCallback((sale: Sale) => {
+    setSaleToCancel(sale);
+    setIsCancelOpen(true);
+  }, []);
+
+  const closeCancelConfirm = useCallback(() => {
+    setIsCancelOpen(false);
+    setSaleToCancel(null);
+  }, []);
+
   const handleFormSubmit = useCallback(async (values: SaleFormValues) => {
+    if (mode === "view") return;
+
     setIsSubmitting(true);
     setFormError(null);
     try {
@@ -87,7 +104,7 @@ export function useSales() {
     } finally {
       setIsSubmitting(false);
     }
-  }, [fetchSales, closeDialog]);
+  }, [mode, fetchSales, closeDialog]);
 
   const handleUpdateStatus = useCallback(async (saleId: number, nextStatus: PaymentStatus) => {
     try {
@@ -101,6 +118,20 @@ export function useSales() {
       alert(err.message || "Failed to alter payment status permissions.");
     }
   }, [fetchSales, selectedSale]);
+
+  const handleCancelSale = useCallback(async () => {
+    if (!saleToCancel) return;
+    setIsCancelling(true);
+    try {
+      await cancelSale(saleToCancel.id);
+      await fetchSales();
+      closeCancelConfirm();
+    } catch (err: any) {
+      setError(err.message || "Failed to execute sale cancellation rollback.");
+    } finally {
+      setIsCancelling(false);
+    }
+  }, [saleToCancel, fetchSales, closeCancelConfirm]);
 
   return {
     sales,
@@ -128,6 +159,15 @@ export function useSales() {
     formError,
     handleFormSubmit,
     handleUpdateStatus,
+
+    // Cancellation controls
+    isCancelOpen,
+    saleToCancel,
+    isCancelling,
+    openCancelConfirm,
+    closeCancelConfirm,
+    handleCancelSale,
+
     refresh: fetchSales,
   };
 }

@@ -34,9 +34,10 @@ export function SaleForm({
     control,
     handleSubmit,
     reset,
+    watch,
     formState: { errors },
   } = useForm<SaleFormValues>({
-    resolver: zodResolver(saleSchema),
+    resolver: zodResolver(saleSchema as any),
     defaultValues: DEFAULT_SALE_FORM_VALUES,
   });
 
@@ -45,17 +46,27 @@ export function SaleForm({
     name: "details",
   });
 
+  const watchApplyDefaultDiscounts = watch("applyDefaultDiscounts");
+  const watchHasBillDiscount = watch("hasBillDiscount");
+
   useEffect(() => {
     if (isViewMode && initialData) {
       reset({
         billDate: new Date(initialData.billDate).toISOString().split("T")[0],
         customerId: initialData.customerId,
         paymentStatus: initialData.paymentStatus,
+        applyDefaultDiscounts: true,
+        hasBillDiscount: false,
+        billDiscountType: "FLAT",
+        billDiscountValue: 0,
         details: initialData.details?.map((d) => ({
           itemId: d.itemId,
           packQty: d.packQty,
           looseQty: d.looseQty,
           saleRate: Number(d.saleRate),
+          hasLineDiscount: false,
+          lineDiscountType: "PERCENT",
+          lineDiscountValue: 0,
         })) || [],
       });
 
@@ -64,10 +75,10 @@ export function SaleForm({
       }
 
       initialData.details?.forEach((line) => {
-        if (line.itemId && line.item?.itemCode && line.item?.itemDesc) {
+        if (line.itemId && line.item) {
           setViewItemDetails((prev) => ({
             ...prev,
-            [line.itemId]: `[${line.item!.itemCode}] ${line.item!.itemDesc}`,
+            [line.itemId]: `[${line?.item?.itemCode}] ${line?.item?.itemDesc}`,
           }));
         }
       });
@@ -85,7 +96,7 @@ export function SaleForm({
         </div>
       )}
 
-      {/* Top Header Grid */}
+      {/* Top Header Controls Grid */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {/* Date */}
         <div className="flex flex-col gap-1.5">
@@ -107,7 +118,7 @@ export function SaleForm({
           )}
         </div>
 
-        {/* Real-time Customer Selection Lookup input wrapper */}
+        {/* Real-time Customer Selector */}
         <div className="flex flex-col gap-1.5">
           <label className="text-sm font-medium text-foreground">Target Account Customer *</label>
           {isViewMode ? (
@@ -122,7 +133,7 @@ export function SaleForm({
           )}
         </div>
 
-        {/* Payment Configuration Select Dropdown */}
+        {/* Payment Configuration */}
         <div className="flex flex-col gap-1.5">
           <label className="text-sm font-medium text-foreground">Payment Status Mode *</label>
           <Controller
@@ -145,7 +156,93 @@ export function SaleForm({
         </div>
       </div>
 
-      {/* Slidable Items Multi-line dynamic array matrix */}
+      {/* Discount Configuration Controls */}
+      {!isViewMode && (
+        <div className="p-4 border border-border rounded-lg bg-muted/10 space-y-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-2">
+              <Controller
+                name="applyDefaultDiscounts"
+                control={control}
+                render={({ field }) => (
+                  <input
+                    type="checkbox"
+                    id="applyDefaultDiscounts"
+                    disabled={isSubmitting}
+                    checked={field.value}
+                    onChange={(e) => field.onChange(e.target.checked)}
+                    className="h-4 w-4 rounded-sm border border-input accent-primary cursor-pointer"
+                  />
+                )}
+              />
+              <label htmlFor="applyDefaultDiscounts" className="text-sm font-medium text-foreground cursor-pointer">
+                Auto-Apply System Matrix Discounts
+              </label>
+            </div>
+            <span className="text-xs text-muted-foreground">
+              {watchApplyDefaultDiscounts ? "Active catalog discount rules will evaluate automatically" : "System matrix discounts disabled"}
+            </span>
+          </div>
+
+          <div className="pt-2 border-t border-border/60 flex flex-col sm:flex-row sm:items-center gap-4">
+            <div className="flex items-center space-x-2">
+              <Controller
+                name="hasBillDiscount"
+                control={control}
+                render={({ field }) => (
+                  <input
+                    type="checkbox"
+                    id="hasBillDiscount"
+                    disabled={isSubmitting}
+                    checked={field.value}
+                    onChange={(e) => field.onChange(e.target.checked)}
+                    className="h-4 w-4 rounded-sm border border-input accent-primary cursor-pointer"
+                  />
+                )}
+              />
+              <label htmlFor="hasBillDiscount" className="text-sm font-medium text-foreground cursor-pointer">
+                Apply Overall Bill Manual Discount
+              </label>
+            </div>
+
+            {watchHasBillDiscount && (
+              <div className="flex items-center gap-2">
+                <Controller
+                  name="billDiscountType"
+                  control={control}
+                  render={({ field }) => (
+                    <select
+                      disabled={isSubmitting}
+                      className="flex h-8 w-28 rounded-md border border-input bg-background px-2 py-1 text-xs shadow-xs focus-visible:outline-hidden"
+                      {...field}
+                    >
+                      <option value="FLAT">Flat (₹)</option>
+                      <option value="PERCENT">Percent (%)</option>
+                    </select>
+                  )}
+                />
+                <Controller
+                  name="billDiscountValue"
+                  control={control}
+                  render={({ field }) => (
+                    <input
+                      type="number"
+                      step="any"
+                      disabled={isSubmitting}
+                      className="flex h-8 w-28 rounded-md border border-input bg-transparent px-2 py-1 text-xs text-right shadow-xs"
+                      placeholder="0.00"
+                      onChange={(e) => field.onChange(e.target.value ? Number(e.target.value) : 0)}
+                      value={field.value ?? 0}
+                    />
+                  )}
+                />
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Slidable Multi-line Item Matrix */}
       <div className="space-y-2">
         <div className="flex justify-between items-center border-b border-border pb-2">
           <h4 className="text-sm font-bold text-foreground uppercase tracking-wider">Line Items Itemized Matrix</h4>
@@ -164,109 +261,172 @@ export function SaleForm({
           <p className="text-xs font-medium text-destructive">{errors.details.root?.message || errors.details.message}</p>
         )}
 
-        {/* Horizontal Scroll Layout container */}
+        {/* Horizontal Container */}
         <div className="w-full overflow-x-auto border border-border rounded-lg bg-muted/5 max-h-[48vh] overflow-y-auto">
-          <div className="min-w-[950px] p-4 space-y-3">
+          <div className="min-w-[1100px] p-4 space-y-3">
             {/* Header Titles */}
             <div className="grid grid-cols-12 gap-3 text-xs font-bold text-muted-foreground uppercase tracking-wider px-2 border-b border-border/40 pb-2">
-              <div className="col-span-5">Active Catalog Item Quick Search Selection</div>
-              <div className="col-span-2 text-center">Pack Qty Vol</div>
-              <div className="col-span-2 text-center">Loose Units Qty</div>
-              <div className="col-span-2 text-right">Sale Unit Rate (₹)</div>
-              <div className="col-span-1 text-right"></div>
+              <div className="col-span-4">Active Catalog Item Quick Search Selection</div>
+              <div className="col-span-1.5 text-center">Pack Qty</div>
+              <div className="col-span-1.5 text-center">Loose Qty</div>
+              <div className="col-span-1.5 text-right">Sale Rate (₹)</div>
+              <div className="col-span-3 text-center">Manual Line Discount</div>
+              <div className="col-span-0.5 text-right"></div>
             </div>
 
-            {fields.map((item, index) => (
-              <div key={item.id} className="grid grid-cols-12 gap-3 items-center p-2 rounded-md hover:bg-muted/30 transition-colors">
-                {/* Embedded Universal Item Search Dropdown */}
-                <div className="col-span-5 relative">
-                  {isViewMode ? (
-                    <input
-                      type="text"
-                      disabled
-                      className="flex h-8 w-full rounded-md border border-input bg-muted/50 px-2 py-1 text-xs font-medium"
-                      value={viewItemDetails[item.itemId] || `Item ID: #${item.itemId}`}
+            {fields.map((item, index) => {
+              const watchHasLineDiscount = watch(`details.${index}.hasLineDiscount`);
+
+              return (
+                <div key={item.id} className="grid grid-cols-12 gap-3 items-center p-2 rounded-md hover:bg-muted/30 transition-colors">
+                  {/* Embedded Universal Item Search Dropdown */}
+                  <div className="col-span-4 relative">
+                    {isViewMode ? (
+                      <input
+                        type="text"
+                        disabled
+                        className="flex h-8 w-full rounded-md border border-input bg-muted/50 px-2 py-1 text-xs font-medium"
+                        value={viewItemDetails[item.itemId] || `Item ID: #${item.itemId}`}
+                      />
+                    ) : (
+                      <InlineItemSearchSelector control={control} index={index} disabled={isSubmitting} />
+                    )}
+                  </div>
+
+                  {/* Pack Qty */}
+                  <div className="col-span-1.5">
+                    <Controller
+                      name={`details.${index}.packQty`}
+                      control={control}
+                      render={({ field }) => (
+                        <input
+                          type="number"
+                          disabled={isViewMode || isSubmitting}
+                          className="flex h-8 w-full rounded-md border border-input bg-transparent px-2 py-1 text-xs text-center shadow-xs"
+                          onChange={(e) => field.onChange(e.target.value ? Number(e.target.value) : 0)}
+                          value={field.value ?? 0}
+                        />
+                      )}
                     />
-                  ) : (
-                    <InlineItemSearchSelector control={control} index={index} disabled={isSubmitting} />
-                  )}
-                </div>
+                  </div>
 
-                {/* Pack Qty */}
-                <div className="col-span-2">
-                  <Controller
-                    name={`details.${index}.packQty`}
-                    control={control}
-                    render={({ field }) => (
-                      <input
-                        type="number"
-                        disabled={isViewMode || isSubmitting}
-                        className="flex h-8 w-full rounded-md border border-input bg-transparent px-2 py-1 text-xs text-center shadow-xs"
-                        onChange={(e) => field.onChange(e.target.value ? Number(e.target.value) : 0)}
-                        value={field.value ?? 0}
-                      />
+                  {/* Loose Qty */}
+                  <div className="col-span-1.5">
+                    <Controller
+                      name={`details.${index}.looseQty`}
+                      control={control}
+                      render={({ field }) => (
+                        <input
+                          type="number"
+                          disabled={isViewMode || isSubmitting}
+                          className="flex h-8 w-full rounded-md border border-input bg-transparent px-2 py-1 text-xs text-center shadow-xs"
+                          onChange={(e) => field.onChange(e.target.value ? Number(e.target.value) : 0)}
+                          value={field.value ?? 0}
+                        />
+                      )}
+                    />
+                  </div>
+
+                  {/* Sale Rate */}
+                  <div className="col-span-1.5">
+                    <Controller
+                      name={`details.${index}.saleRate`}
+                      control={control}
+                      render={({ field }) => (
+                        <input
+                          type="number"
+                          step="any"
+                          disabled={isViewMode || isSubmitting}
+                          className="flex h-8 w-full rounded-md border border-input bg-transparent px-2 py-1 text-xs text-right shadow-xs"
+                          onChange={(e) => field.onChange(e.target.value ? Number(e.target.value) : "")}
+                          value={field.value ?? ""}
+                        />
+                      )}
+                    />
+                  </div>
+
+                  {/* Line Manual Discount Selector */}
+                  <div className="col-span-3 flex items-center justify-center gap-1.5">
+                    {!isViewMode ? (
+                      <>
+                        <Controller
+                          name={`details.${index}.hasLineDiscount`}
+                          control={control}
+                          render={({ field }) => (
+                            <input
+                              type="checkbox"
+                              disabled={isSubmitting}
+                              checked={field.value}
+                              onChange={(e) => field.onChange(e.target.checked)}
+                              className="h-3.5 w-3.5 rounded-sm border border-input accent-primary cursor-pointer"
+                              title="Toggle Line Manual Discount"
+                            />
+                          )}
+                        />
+                        {watchHasLineDiscount ? (
+                          <>
+                            <Controller
+                              name={`details.${index}.lineDiscountType`}
+                              control={control}
+                              render={({ field }) => (
+                                <select
+                                  disabled={isSubmitting}
+                                  className="flex h-8 w-20 rounded-md border border-input bg-background px-1 py-1 text-[11px] shadow-xs"
+                                  {...field}
+                                >
+                                  <option value="PERCENT">%</option>
+                                  <option value="FLAT">₹</option>
+                                </select>
+                              )}
+                            />
+                            <Controller
+                              name={`details.${index}.lineDiscountValue`}
+                              control={control}
+                              render={({ field }) => (
+                                <input
+                                  type="number"
+                                  step="any"
+                                  disabled={isSubmitting}
+                                  className="flex h-8 w-16 rounded-md border border-input bg-transparent px-2 py-1 text-xs text-right shadow-xs"
+                                  onChange={(e) => field.onChange(e.target.value ? Number(e.target.value) : 0)}
+                                  value={field.value ?? 0}
+                                />
+                              )}
+                            />
+                          </>
+                        ) : (
+                          <span className="text-[11px] text-muted-foreground italic">None</span>
+                        )}
+                      </>
+                    ) : (
+                      <span className="text-xs font-mono text-muted-foreground">—</span>
                     )}
-                  />
-                </div>
+                  </div>
 
-                {/* Loose Qty */}
-                <div className="col-span-2">
-                  <Controller
-                    name={`details.${index}.looseQty`}
-                    control={control}
-                    render={({ field }) => (
-                      <input
-                        type="number"
-                        disabled={isViewMode || isSubmitting}
-                        className="flex h-8 w-full rounded-md border border-input bg-transparent px-2 py-1 text-xs text-center shadow-xs"
-                        onChange={(e) => field.onChange(e.target.value ? Number(e.target.value) : 0)}
-                        value={field.value ?? 0}
-                      />
+                  {/* Row Drop Actions */}
+                  <div className="col-span-0.5 text-right">
+                    {!isViewMode && (
+                      <button
+                        type="button"
+                        onClick={() => remove(index)}
+                        className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-destructive/20 text-destructive hover:bg-destructive/10 cursor-pointer transition-colors"
+                      >
+                        ✕
+                      </button>
                     )}
-                  />
+                  </div>
                 </div>
-
-                {/* Sale Rate */}
-                <div className="col-span-2">
-                  <Controller
-                    name={`details.${index}.saleRate`}
-                    control={control}
-                    render={({ field }) => (
-                      <input
-                        type="number"
-                        step="any"
-                        disabled={isViewMode || isSubmitting}
-                        className="flex h-8 w-full rounded-md border border-input bg-transparent px-2 py-1 text-xs text-right shadow-xs"
-                        onChange={(e) => field.onChange(e.target.value ? Number(e.target.value) : "")}
-                        value={field.value ?? ""}
-                      />
-                    )}
-                  />
-                </div>
-
-                {/* Row Drop Actions */}
-                <div className="col-span-1 text-right">
-                  {!isViewMode && (
-                    <button
-                      type="button"
-                      onClick={() => remove(index)}
-                      className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-destructive/20 text-destructive hover:bg-destructive/10 cursor-pointer transition-colors"
-                    >
-                      ✕
-                    </button>
-                  )}
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </div>
 
-      {/* Dynamic Summary Panel */}
+      {/* View-Only Readout Summary Dashboard */}
       {isViewMode && initialData && (
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3 p-4 bg-muted/40 border border-border rounded-lg text-sm">
           <div><span className="text-xs block text-muted-foreground uppercase">Gross Item Amt</span><span className="font-bold font-mono">₹{Number(initialData.totalAmount).toFixed(2)}</span></div>
-          <div><span className="text-xs block text-muted-foreground uppercase">Autocalc Discount</span><span className="font-bold font-mono text-destructive">₹{Number(initialData.discountAmount).toFixed(2)}</span></div>
+          <div><span className="text-xs block text-muted-foreground uppercase">Evaluated Discount</span><span className="font-bold font-mono text-destructive">₹{Number(initialData.discountAmount).toFixed(2)}</span></div>
           <div><span className="text-xs block text-muted-foreground uppercase">CGST Component</span><span className="font-bold font-mono">₹{Number(initialData.cgstAmount).toFixed(2)}</span></div>
           <div><span className="text-xs block text-muted-foreground uppercase">SGST Component</span><span className="font-bold font-mono">₹{Number(initialData.sgstAmount).toFixed(2)}</span></div>
           <div className="col-span-2 md:col-span-1 border-t md:border-t-0 md:border-l border-border pt-2 md:pt-0 md:pl-3"><span className="text-xs block text-muted-foreground uppercase font-semibold">Net Payable Total</span><span className="font-extrabold font-mono text-emerald-600 text-base">₹{Number(initialData.netAmount).toFixed(2)}</span></div>
@@ -298,7 +458,7 @@ export function SaleForm({
 }
 
 /**
- * Real-Time Debounced Customer Search Input Selection Popover component
+ * Real-Time Debounced Customer Search Input Selector
  */
 function HeaderCustomerSearchSelector({ control, disabled, error }: { control: any; disabled: boolean; error?: string }) {
   const [term, setTerm] = useState("");

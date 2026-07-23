@@ -1,4 +1,4 @@
-// app/api/sales/[id]/route.ts
+// app/api/sales/[id]/cancel/route.ts
 import { UserRole } from "@/lib/generated/prisma/client";
 import { AuthenticatinNeed, authErrorResponse } from "@/lib/auth";
 import { requireRole } from "@/lib/authorization";
@@ -8,10 +8,13 @@ import { saleIdParamSchema } from "@/validation/sale.validation";
 
 type RouteParams = { params: Promise<{ id: string }> };
 
-export async function GET(request: Request, { params }: RouteParams) {
+export async function POST(request: Request, { params }: RouteParams) {
     try {
-        // Authenticate — any role can view a sale
-        await AuthenticatinNeed(request);
+        // Authenticate
+        const authUser = await AuthenticatinNeed(request);
+
+        // Authorize — any role can cancel a sale
+        requireRole(authUser, UserRole.ADMIN, UserRole.MANAGER, UserRole.SALESMAN);
 
         const { id } = await params;
         const result = saleIdParamSchema.safeParse({ id });
@@ -20,9 +23,9 @@ export async function GET(request: Request, { params }: RouteParams) {
         }
 
         // Business Logic
-        const sale = await saleService.GetSaleById(result.data.id);
+        await saleService.CancelSale(result.data.id);
 
-        return Response.json(new ApiResponse("Sale fetched successfully", sale));
+        return Response.json(new ApiResponse("Sale cancelled successfully"));
     } catch (error) {
         return authErrorResponse(error);
     }

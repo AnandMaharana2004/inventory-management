@@ -27,6 +27,12 @@ export function SaleList() {
     formError,
     handleFormSubmit,
     handleUpdateStatus,
+    isCancelOpen,
+    saleToCancel,
+    isCancelling,
+    openCancelConfirm,
+    closeCancelConfirm,
+    handleCancelSale,
   } = useSales();
 
   return (
@@ -44,7 +50,7 @@ export function SaleList() {
         </button>
       </div>
 
-      {/* Audit Parameters Filtering row section */}
+      {/* Audit Parameters Filtering Row */}
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 bg-muted/30 p-4 rounded-lg border border-border/60">
         <div className="flex flex-col gap-1">
           <label className="text-xs font-semibold text-muted-foreground uppercase">Customer Account ID</label>
@@ -131,13 +137,12 @@ export function SaleList() {
                     <select
                       value={sale.paymentStatus}
                       onChange={(e) => handleUpdateStatus(sale.id, e.target.value as any)}
-                      className={`text-xs font-bold rounded px-2 py-0.5 border bg-transparent cursor-pointer ${
-                        sale.paymentStatus === "PAID"
+                      className={`text-xs font-bold rounded px-2 py-0.5 border bg-transparent cursor-pointer ${sale.paymentStatus === "PAID"
                           ? "text-emerald-700 border-emerald-200 bg-emerald-50"
                           : sale.paymentStatus === "PARTIAL"
-                          ? "text-amber-700 border-amber-200 bg-amber-50"
-                          : "text-rose-700 border-rose-200 bg-rose-50"
-                      }`}
+                            ? "text-amber-700 border-amber-200 bg-amber-50"
+                            : "text-rose-700 border-rose-200 bg-rose-50"
+                        }`}
                     >
                       <option value="PAID">PAID</option>
                       <option value="PARTIAL">PARTIAL</option>
@@ -147,12 +152,18 @@ export function SaleList() {
                   <td className="p-4 align-middle text-right font-bold font-mono text-emerald-600">
                     ₹{Number(sale.netAmount).toFixed(2)}
                   </td>
-                  <td className="p-4 align-middle text-right">
+                  <td className="p-4 align-middle text-right space-x-2 whitespace-nowrap">
                     <button
                       onClick={() => openView(sale.id)}
                       className="inline-flex items-center justify-center rounded-md text-xs font-medium border border-input h-7 px-3 hover:bg-accent cursor-pointer"
                     >
                       Review Invoice
+                    </button>
+                    <button
+                      onClick={() => openCancelConfirm(sale)}
+                      className="inline-flex items-center justify-center rounded-md text-xs font-medium border border-destructive/20 h-7 px-2.5 hover:bg-destructive/10 text-destructive cursor-pointer"
+                    >
+                      Cancel
                     </button>
                   </td>
                 </tr>
@@ -162,7 +173,7 @@ export function SaleList() {
         </div>
       )}
 
-      {/* Overlay modal review frame */}
+      {/* Primary Form Modal Frame */}
       {isOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="bg-background border border-border w-full max-w-7xl rounded-lg shadow-lg p-6 max-h-[95vh] overflow-y-auto">
@@ -180,6 +191,36 @@ export function SaleList() {
               onSubmit={handleFormSubmit}
               onCancel={closeDialog}
             />
+          </div>
+        </div>
+      )}
+
+      {/* Cancellation Confirmation Alert Modal */}
+      {isCancelOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-background border border-border w-full max-w-md rounded-lg shadow-lg p-6">
+            <h3 className="text-lg font-bold text-foreground mb-2">Cancel Sale Transaction</h3>
+            <p className="text-sm text-muted-foreground mb-6">
+              Are you sure you want to cancel invoice <span className="font-semibold text-foreground">"#INV-{saleToCancel?.id}"</span>? Cancelling this sale will automatically restore reserved stock pieces back to inventory and purge the stock ledger entry.
+            </p>
+            <div className="flex justify-end gap-3">
+              <button
+                type="button"
+                onClick={closeCancelConfirm}
+                disabled={isCancelling}
+                className="inline-flex items-center justify-center rounded-md text-sm font-medium border border-input bg-background h-9 px-4 py-2 cursor-pointer"
+              >
+                Keep Sale
+              </button>
+              <button
+                type="button"
+                onClick={handleCancelSale}
+                disabled={isCancelling}
+                className="inline-flex items-center justify-center rounded-md text-sm font-medium bg-destructive text-destructive-foreground hover:bg-destructive/90 h-9 px-4 py-2 cursor-pointer"
+              >
+                {isCancelling ? "Cancelling..." : "Confirm Rollback"}
+              </button>
+            </div>
           </div>
         </div>
       )}
